@@ -4,6 +4,32 @@ Game = namedtuple('Game', ['env_name', 'time_factor', 'input_size', 'output_size
 
 games = {}
 
+bipedeasy = Game(env_name='BipedalWalker-v2',
+  input_size=24,
+  output_size=4,
+  time_factor=0,
+  layers=[40, 40],
+  activation='tanh',
+  noise_bias=0.0,
+  output_noise=[False, False, False],
+  rnn_mode=False,               
+)
+
+bipedeasyphys = Game(env_name='BipedalWalkerPhys-v2',
+  input_size=24,
+  output_size=7,
+  time_factor=0,
+  layers=[40, 40],
+  activation='tanh',
+  noise_bias=0.0,
+  output_noise=[False, False, False],
+  rnn_mode=False,               
+)
+
+games['bipedeasy'] = bipedeasy
+
+games['bipedeasyphys'] = bipedeasyphys
+
 slimevolley = Game(env_name='SlimeVolley',
   input_size=12,
   output_size=3,

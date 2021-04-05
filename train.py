@@ -20,7 +20,7 @@ import subprocess
 import sys
 import config
 from model import make_model, simulate
-from es import CMAES, SimpleGA, OpenES, PEPG
+from es import CMAES, SimpleGA, OpenES, PEPG, Experiment, ExperimentGrafting, ExperimentCrossover
 import argparse
 import time
 
@@ -107,6 +107,42 @@ def initialize_settings(sigma_init=0.1, sigma_decay=0.9999):
       weight_decay=0.005,
       popsize=population)
     es = pepg
+  elif optimizer == 'experiment':
+      oes = Experiment(num_params,
+      sigma_init=sigma_init,
+      sigma_decay=sigma_decay,
+      sigma_limit=0.02,
+      learning_rate=0.01,
+      learning_rate_decay=1.0,
+      learning_rate_limit=0.01,
+      antithetic=antithetic,
+      weight_decay=0.005,
+      popsize=population)
+      es = oes
+  elif optimizer == 'experimentCrossover':
+      oes = ExperimentCrossover(num_params,
+      sigma_init=sigma_init,
+      sigma_decay=sigma_decay,
+      sigma_limit=0.02,
+      learning_rate=0.01,
+      learning_rate_decay=1.0,
+      learning_rate_limit=0.01,
+      antithetic=antithetic,
+      weight_decay=0.005,
+      popsize=population)
+      es = oes
+  elif optimizer == 'experimentGrafting':
+      oes = ExperimentGrafting(num_params,
+      sigma_init=sigma_init,
+      sigma_decay=sigma_decay,
+      sigma_limit=0.02,
+      learning_rate=0.01,
+      learning_rate_decay=1.0,
+      learning_rate_limit=0.01,
+      antithetic=antithetic,
+      weight_decay=0.005,
+      popsize=population)
+      es = oes
   else:
     oes = OpenES(num_params,
       sigma_init=sigma_init,

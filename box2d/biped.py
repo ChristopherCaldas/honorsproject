@@ -65,6 +65,7 @@ TERRAIN_GRASS    = 10    # low long are grass spots, in steps
 TERRAIN_STARTPAD = 20    # in steps
 FRICTION = 2.5
 
+
 BIPED_LIMIT = 1600
 BIPED_HARDCORE_LIMIT = 2000
 
@@ -383,6 +384,10 @@ class BipedalWalker(gym.Env):
     def _step(self, action):
         #self.hull.ApplyForceToCenter((0, 20), True) -- Uncomment this to receive a bit of stability help
         control_speed = False  # Should be easier as well
+        
+        
+
+            
         if control_speed:
             self.joints[0].motorSpeed = float(SPEED_HIP  * np.clip(action[0], -1, 1))
             self.joints[1].motorSpeed = float(SPEED_KNEE * np.clip(action[1], -1, 1))

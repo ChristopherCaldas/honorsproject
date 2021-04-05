@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 def compute_ranks(x):
   """
@@ -308,6 +309,476 @@ class OpenES:
     best_reward = reward[idx[0]]
     best_mu = self.solutions[idx[0]]
 
+    self.curr_best_reward = best_reward
+    self.curr_best_mu = best_mu
+
+    if self.first_interation:
+      self.first_interation = False
+      self.best_reward = self.curr_best_reward
+      self.best_mu = best_mu
+    else:
+      if self.forget_best or (self.curr_best_reward > self.best_reward):
+        self.best_mu = best_mu
+        self.best_reward = self.curr_best_reward
+
+    # main bit:
+    # standardize the rewards to have a gaussian distribution
+    normalized_reward = (reward - np.mean(reward)) / np.std(reward)
+    change_mu = 1./(self.popsize*self.sigma)*np.dot(self.epsilon.T, normalized_reward)
+    
+    #self.mu += self.learning_rate * change_mu
+
+    self.optimizer.stepsize = self.learning_rate
+    update_ratio = self.optimizer.update(-change_mu)
+
+    # adjust sigma according to the adaptive sigma calculation
+    if (self.sigma > self.sigma_limit):
+      self.sigma *= self.sigma_decay
+
+    if (self.learning_rate > self.learning_rate_limit):
+      self.learning_rate *= self.learning_rate_decay
+
+  def current_param(self):
+    return self.curr_best_mu
+
+  def set_mu(self, mu):
+    self.mu = np.array(mu)
+
+  def best_param(self):
+    return self.best_mu
+
+  def result(self): # return best params so far, along with historically best reward, curr reward, sigma
+    return (self.best_mu, self.best_reward, self.curr_best_reward, self.sigma)
+
+class Experiment:
+  ''' Christopher Caldas attempt to implement Karl Sims breeding techniques ...taken from OPENES btw'''
+  def __init__(self, num_params,             # number of model parameters
+               sigma_init=0.1,               # initial standard deviation
+               sigma_decay=0.999,            # anneal standard deviation
+               sigma_limit=0.01,             # stop annealing if less than this
+               learning_rate=0.01,           # learning rate for standard deviation
+               learning_rate_decay = 0.9999, # annealing the learning rate
+               learning_rate_limit = 0.001,  # stop annealing learning rate
+               popsize=256,                  # population size
+               antithetic=False,             # whether to use antithetic sampling
+               weight_decay=0.01,            # weight decay coefficient
+               rank_fitness=True,            # use rank rather than fitness numbers
+               forget_best=True):            # forget historical best
+
+    self.num_params = num_params
+    self.sigma_decay = sigma_decay
+    self.sigma = sigma_init
+    self.sigma_init = sigma_init
+    self.popsize = popsize
+    self.sigma_limit = sigma_limit
+    self.learning_rate = learning_rate
+    self.learning_rate_decay = learning_rate_decay
+    self.learning_rate_limit = learning_rate_limit
+    self.antithetic = antithetic
+
+    #Stores additional critters for
+    self.bestOnes = np.zeros(self.popsize, self.num_params)
+    assert (self.popsize % 4 == 0), "Population size must be divisable by 4"
+    self.half_popsize = int(self.popsize / 2)
+    self.quar_popsize = int(self.popsize / 4)
+
+    self.reward = np.zeros(self.popsize)
+    self.mu = np.zeros(self.num_params)
+    self.best_mu = np.zeros(self.num_params)
+    self.best_reward = 0
+    self.first_interation = True
+    self.forget_best = forget_best
+    self.weight_decay = weight_decay
+    self.rank_fitness = rank_fitness
+    self.counter = 0
+    if self.rank_fitness:
+      self.forget_best = True # always forget the best one if we rank
+    # choose optimizer
+    self.optimizer = Adam(self, learning_rate)
+
+  def rms_stdev(self):
+    sigma = self.sigma
+    return np.mean(np.sqrt(sigma*sigma))
+
+  def crossover(self):
+    output = np.zeros([self.quar_popsize, self.num_params])
+    a = self.bestOnes[random.randrange(self.quar_popsize)]
+    b = self.bestOnes[random.randrange(self.quar_popsize)]
+    for i in range(self.quar_popsize):
+      mask1 = np.random.binomial(1, .50, size=self.num_params)
+      mask2 = (mask1 - np.ones(self.num_params)) * -1
+      output[i] = (a * mask1) + (b * mask2)
+    return output
+
+  def grafting(self):
+    output = np.zeros([self.quar_popsize, self.num_params])
+    a = self.bestOnes[random.randrange(self.quar_popsize)]
+    b = self.bestOnes[random.randrange(self.quar_popsize)]
+    for i in range(self.quar_popsize):
+      mask1 = np.random.rand(self.num_params)
+      mask2 = np.ones(self.num_params) - mask1
+      output[i] = (a * mask1) + (b * mask2)
+    return output
+
+ 
+    
+
+
+
+  def ask(self):
+    '''returns a list of parameters'''
+    # antithetic sampling (DOESNT WORK FOR THIS VERSION) !!!
+    if self.antithetic:
+      self.epsilon_half = np.random.randn(self.half_popsize, self.num_params)
+      self.epsilon = np.concatenate([self.epsilon_half, - self.epsilon_half])
+    else:
+      self.epsilon = np.random.randn(self.popsize, self.num_params)
+
+    _,halfep = np.split(self.epsilon,2)
+    asexual = self.mu.reshape(1, self.num_params) + halfep * self.sigma
+    crossover  = self.crossover()
+    grafting = self.grafting()
+
+
+    self.solutions = np.concatenate([asexual,crossover,grafting])
+    print(self.solutions.shape)
+    return self.solutions
+
+  def tell(self, reward_table_result):
+    # input must be a numpy float array
+    assert(len(reward_table_result) == self.popsize), "Inconsistent reward_table size reported."
+    
+    reward = np.array(reward_table_result)
+    
+    if self.rank_fitness:
+      reward = compute_centered_ranks(reward)
+    
+    if self.weight_decay > 0:
+      l2_decay = compute_weight_decay(self.weight_decay, self.solutions)
+      reward += l2_decay
+
+    idx = np.argsort(reward)[::-1]
+
+    #Stores previous generations sorted by reward
+    self.bestOnes = [x for _,x in sorted(zip(idx,self.solutions))]
+    
+    
+    best_reward = reward[idx[0]]
+    best_mu = self.solutions[idx[0]]
+    self.curr_best_reward = best_reward
+    self.curr_best_mu = best_mu
+
+    if self.first_interation:
+      self.first_interation = False
+      self.best_reward = self.curr_best_reward
+      self.best_mu = best_mu
+    else:
+      if self.forget_best or (self.curr_best_reward > self.best_reward):
+        self.best_mu = best_mu
+        self.best_reward = self.curr_best_reward
+
+    # main bit:
+    # standardize the rewards to have a gaussian distribution
+    normalized_reward = (reward - np.mean(reward)) / np.std(reward)
+    change_mu = 1./(self.popsize*self.sigma)*np.dot(self.epsilon.T, normalized_reward)
+    
+    #self.mu += self.learning_rate * change_mu
+
+    self.optimizer.stepsize = self.learning_rate
+    update_ratio = self.optimizer.update(-change_mu)
+
+    # adjust sigma according to the adaptive sigma calculation
+    if (self.sigma > self.sigma_limit):
+      self.sigma *= self.sigma_decay
+
+    if (self.learning_rate > self.learning_rate_limit):
+      self.learning_rate *= self.learning_rate_decay
+
+  def current_param(self):
+    return self.curr_best_mu
+
+  def set_mu(self, mu):
+    self.mu = np.array(mu)
+
+  def best_param(self):
+    return self.best_mu
+
+  def result(self): # return best params so far, along with historically best reward, curr reward, sigma
+    return (self.best_mu, self.best_reward, self.curr_best_reward, self.sigma)
+
+class ExperimentGrafting:
+  ''' Christopher Caldas attempt to implement Karl Sims breeding techniques Now Using Grafting...taken from OPENES btw'''
+  def __init__(self, num_params,             # number of model parameters
+               sigma_init=0.1,               # initial standard deviation
+               sigma_decay=0.999,            # anneal standard deviation
+               sigma_limit=0.01,             # stop annealing if less than this
+               learning_rate=0.01,           # learning rate for standard deviation
+               learning_rate_decay = 0.9999, # annealing the learning rate
+               learning_rate_limit = 0.001,  # stop annealing learning rate
+               popsize=256,                  # population size
+               antithetic=False,             # whether to use antithetic sampling
+               weight_decay=0.01,            # weight decay coefficient
+               rank_fitness=True,            # use rank rather than fitness numbers
+               forget_best=True):            # forget historical best
+
+    self.num_params = num_params 
+    self.sigma_decay = sigma_decay
+    self.sigma = sigma_init
+    self.sigma_init = sigma_init
+    self.popsize = popsize
+    self.sigma_limit = sigma_limit
+    self.learning_rate = learning_rate
+    self.learning_rate_decay = learning_rate_decay
+    self.learning_rate_limit = learning_rate_limit
+    self.antithetic = antithetic
+
+    #Stores additional critters for
+    self.bestOnes = np.zeros(self.popsize, self.num_params)
+    assert (self.popsize % 4 == 0), "Population size must be divisable by 4"
+    self.half_popsize = int(self.popsize / 2)
+    self.quar_popsize = int(self.popsize / 4)
+
+    self.reward = np.zeros(self.popsize)
+    self.mu = np.zeros(self.num_params)
+    self.best_mu = np.zeros(self.num_params)
+    self.best_reward = 0
+    self.first_interation = True
+    self.forget_best = forget_best
+    self.weight_decay = weight_decay
+    self.rank_fitness = rank_fitness
+    self.counter = 0
+    if self.rank_fitness:
+      self.forget_best = True # always forget the best one if we rank
+    # choose optimizer
+    self.optimizer = Adam(self, learning_rate)
+
+  def rms_stdev(self):
+    sigma = self.sigma
+    return np.mean(np.sqrt(sigma*sigma))
+
+  def crossover(self):
+    output = np.zeros([self.quar_popsize, self.num_params])
+    a = self.bestOnes[random.randrange(self.quar_popsize)]
+    b = self.bestOnes[random.randrange(self.quar_popsize)]
+    for i in range(self.quar_popsize):
+      mask1 = np.random.binomial(1, .50, size=self.num_params)
+      mask2 = (mask1 - np.ones(self.num_params)) * -1
+      output[i] = (a * mask1) + (b * mask2)
+    return output
+
+  def grafting(self):
+    output = np.zeros([self.quar_popsize, self.num_params])
+    a = self.bestOnes[random.randrange(self.quar_popsize)]
+    b = self.bestOnes[random.randrange(self.quar_popsize)]
+    for i in range(self.quar_popsize):
+      mask1 = np.random.rand(self.num_params)
+      mask2 = np.ones(self.num_params) - mask1
+      output[i] = (a * mask1) + (b * mask2)
+    return output
+
+ 
+    
+
+
+
+  def ask(self):
+    '''returns a list of parameters'''
+    # antithetic sampling (DOESNT WORK FOR THIS VERSION) !!!
+    if self.antithetic:
+      self.epsilon_half = np.random.randn(self.half_popsize, self.num_params)
+      self.epsilon = np.concatenate([self.epsilon_half, - self.epsilon_half])
+    else:
+      self.epsilon = np.random.randn(self.popsize, self.num_params)
+
+    
+    asexual = self.mu.reshape(1, self.num_params) + self.epsilon * self.sigma
+    crossover  = self.crossover()
+    grafting = self.grafting()
+    
+    t1, t2, t3, t4 = np.split(asexual,4)
+
+    self.solutions = np.concatenate([t1,t2,t3,grafting])
+    print(self.solutions.shape)
+    return self.solutions
+
+  def tell(self, reward_table_result):
+    # input must be a numpy float array
+    assert(len(reward_table_result) == self.popsize), "Inconsistent reward_table size reported."
+    
+    reward = np.array(reward_table_result)
+    
+    if self.rank_fitness:
+      reward = compute_centered_ranks(reward)
+    
+    if self.weight_decay > 0:
+      l2_decay = compute_weight_decay(self.weight_decay, self.solutions)
+      reward += l2_decay
+
+    idx = np.argsort(reward)[::-1]
+
+    #Stores previous generations sorted by reward
+    self.bestOnes = [x for _,x in sorted(zip(idx,self.solutions))]
+    
+    
+    best_reward = reward[idx[0]]
+    best_mu = self.solutions[idx[0]]
+    self.curr_best_reward = best_reward
+    self.curr_best_mu = best_mu
+
+    if self.first_interation:
+      self.first_interation = False
+      self.best_reward = self.curr_best_reward
+      self.best_mu = best_mu
+    else:
+      if self.forget_best or (self.curr_best_reward > self.best_reward):
+        self.best_mu = best_mu
+        self.best_reward = self.curr_best_reward
+
+    # main bit:
+    # standardize the rewards to have a gaussian distribution
+    normalized_reward = (reward - np.mean(reward)) / np.std(reward)
+    change_mu = 1./(self.popsize*self.sigma)*np.dot(self.epsilon.T, normalized_reward)
+    
+    #self.mu += self.learning_rate * change_mu
+
+    self.optimizer.stepsize = self.learning_rate
+    update_ratio = self.optimizer.update(-change_mu)
+
+    # adjust sigma according to the adaptive sigma calculation
+    if (self.sigma > self.sigma_limit):
+      self.sigma *= self.sigma_decay
+
+    if (self.learning_rate > self.learning_rate_limit):
+      self.learning_rate *= self.learning_rate_decay
+
+  def current_param(self):
+    return self.curr_best_mu
+
+  def set_mu(self, mu):
+    self.mu = np.array(mu)
+
+  def best_param(self):
+    return self.best_mu
+
+  def result(self): # return best params so far, along with historically best reward, curr reward, sigma
+    return (self.best_mu, self.best_reward, self.curr_best_reward, self.sigma)
+
+class ExperimentCrossover:
+  ''' Christopher Caldas attempt to implement Karl Sims breeding techniques Now Using Crossover...taken from OPENES btw'''
+  def __init__(self, num_params,             # number of model parameters
+               sigma_init=0.1,               # initial standard deviation
+               sigma_decay=0.999,            # anneal standard deviation
+               sigma_limit=0.01,             # stop annealing if less than this
+               learning_rate=0.01,           # learning rate for standard deviation
+               learning_rate_decay = 0.9999, # annealing the learning rate
+               learning_rate_limit = 0.001,  # stop annealing learning rate
+               popsize=256,                  # population size
+               antithetic=False,             # whether to use antithetic sampling
+               weight_decay=0.01,            # weight decay coefficient
+               rank_fitness=True,            # use rank rather than fitness numbers
+               forget_best=True):            # forget historical best
+
+    self.num_params = num_params
+    self.sigma_decay = sigma_decay
+    self.sigma = sigma_init
+    self.sigma_init = sigma_init
+    self.popsize = popsize
+    self.sigma_limit = sigma_limit
+    self.learning_rate = learning_rate
+    self.learning_rate_decay = learning_rate_decay
+    self.learning_rate_limit = learning_rate_limit
+    self.antithetic = antithetic
+
+    #Stores additional critters for
+    self.bestOnes = np.zeros(self.popsize, self.num_params)
+    assert (self.popsize % 4 == 0), "Population size must be divisable by 4"
+    self.half_popsize = int(self.popsize / 2)
+    self.quar_popsize = int(self.popsize / 4)
+
+    self.reward = np.zeros(self.popsize)
+    self.mu = np.zeros(self.num_params)
+    self.best_mu = np.zeros(self.num_params)
+    self.best_reward = 0
+    self.first_interation = True
+    self.forget_best = forget_best
+    self.weight_decay = weight_decay
+    self.rank_fitness = rank_fitness
+    self.counter = 0
+    if self.rank_fitness:
+      self.forget_best = True # always forget the best one if we rank
+    # choose optimizer
+    self.optimizer = Adam(self, learning_rate)
+
+  def rms_stdev(self):
+    sigma = self.sigma
+    return np.mean(np.sqrt(sigma*sigma))
+
+  def crossover(self):
+    output = np.zeros([self.quar_popsize, self.num_params])
+    a = self.bestOnes[random.randrange(self.quar_popsize)]
+    b = self.bestOnes[random.randrange(self.quar_popsize)]
+    for i in range(self.quar_popsize):
+      mask1 = np.random.binomial(1, .50, size=self.num_params)
+      mask2 = (mask1 - np.ones(self.num_params)) * -1
+      output[i] = (a * mask1) + (b * mask2)
+    return output
+
+  def grafting(self):
+    output = np.zeros([self.quar_popsize, self.num_params])
+    a = self.bestOnes[random.randrange(self.quar_popsize)]
+    b = self.bestOnes[random.randrange(self.quar_popsize)]
+    for i in range(self.quar_popsize):
+      mask1 = np.random.rand(self.num_params)
+      mask2 = np.ones(self.num_params) - mask1
+      output[i] = (a * mask1) + (b * mask2)
+    return output
+
+ 
+    
+
+
+
+  def ask(self):
+    '''returns a list of parameters'''
+    # antithetic sampling (DOESNT WORK FOR THIS VERSION) !!!
+    if self.antithetic:
+      self.epsilon_half = np.random.randn(self.half_popsize, self.num_params)
+      self.epsilon = np.concatenate([self.epsilon_half, - self.epsilon_half])
+    else:
+      self.epsilon = np.random.randn(self.popsize, self.num_params)
+
+    
+    asexual = self.mu.reshape(1, self.num_params) + self.epsilon * self.sigma
+    crossover  = self.crossover()
+    grafting = self.grafting()
+    
+    t1, t2, t3, t4 = np.split(asexual,4)
+
+    self.solutions = np.concatenate([t1,t2,t3,crossover])
+    print(self.solutions.shape)
+    return self.solutions
+
+  def tell(self, reward_table_result):
+    # input must be a numpy float array
+    assert(len(reward_table_result) == self.popsize), "Inconsistent reward_table size reported."
+    
+    reward = np.array(reward_table_result)
+    
+    if self.rank_fitness:
+      reward = compute_centered_ranks(reward)
+    
+    if self.weight_decay > 0:
+      l2_decay = compute_weight_decay(self.weight_decay, self.solutions)
+      reward += l2_decay
+
+    idx = np.argsort(reward)[::-1]
+
+    #Stores previous generations sorted by reward
+    self.bestOnes = [x for _,x in sorted(zip(idx,self.solutions))]
+    
+    
+    best_reward = reward[idx[0]]
+    best_mu = self.solutions[idx[0]]
     self.curr_best_reward = best_reward
     self.curr_best_mu = best_mu
 
