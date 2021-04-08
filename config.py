@@ -26,6 +26,19 @@ bipedeasyphys = Game(env_name='BipedalWalkerPhys-v2',
   rnn_mode=False,               
 )
 
+
+bipedhardcorephys = Game(env_name='BipedalWalkerPhysHardcore-v2',
+  input_size=24,
+  output_size=7,
+  time_factor=0,
+  layers=[40, 40],
+  activation='tanh',
+  noise_bias=0.0,
+  output_noise=[False, False, False],
+  rnn_mode=False,               
+)
+games['bipedhardcorephys'] = bipedhardcorephys
+
 games['bipedeasy'] = bipedeasy
 
 games['bipedeasyphys'] = bipedeasyphys

@@ -15,6 +15,9 @@ def make_env(env_name, seed=-1, render_mode=False):
     if (env_name.startswith("BipedalWalkerHardcore")):
       from box2d.biped import BipedalWalkerHardcore
       env = BipedalWalkerHardcore()
+    elif (env_name.startswith("BipedalWalkerPhysHardcore")):
+      from box2d.bipedPhys import BipedalWalkerHardcore
+      env = BipedalWalkerHardcore()
     elif (env_name.startswith("BipedalWalkerPhys")):
       from box2d.bipedPhys import BipedalWalker
       env = BipedalWalker()
