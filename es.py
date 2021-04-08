@@ -434,13 +434,17 @@ class Experiment:
     else:
       self.epsilon = np.random.randn(self.popsize, self.num_params)
 
-    _,halfep = np.split(self.epsilon,2)
-    asexual = self.mu.reshape(1, self.num_params) + halfep * self.sigma
+    asexual = self.mu.reshape(1, self.num_params) + self.epsilon * self.sigma
     crossover  = self.crossover()
     grafting = self.grafting()
+    
+    halfcross,_ = np.split(crossover,2)
+    halfgraft,_ = np.split(grafting,2)
+    hybrid = np.concatenate([halfcross,halfgraft])
+    
+    t1, t2, t3, t4 = np.split(asexual,4)
 
-
-    self.solutions = np.concatenate([asexual,crossover,grafting])
+    self.solutions = np.concatenate([t1,t2,t3,grafting])
     print(self.solutions.shape)
     return self.solutions
 
